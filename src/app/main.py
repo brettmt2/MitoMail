@@ -43,6 +43,17 @@ def get_email_from_session(db, session_id: str) -> str | None:
     return row[0]
 
 def save_credentials(db, email: str, creds: Credentials) -> None:
+    if not creds.refresh_token:
+        user_creds: Credentials = load_credentials(db=db, email=email)
+        
+        if not user_creds:
+            return
+        
+        if user_creds.refresh_token:
+            creds.refresh_token = user_creds.refresh_token
+        else:
+            return
+
     cursor = db.cursor()
     cursor.execute("""
         INSERT INTO user_credentials (user_email, credentials_json, updated_at)
