@@ -29,6 +29,30 @@ def load_credentials(db, email: str) -> Credentials | None:
         info=json.loads(creds_json), scopes=SCOPES
     )
 
+def get_email_from_session(db, session_id: str) -> str | None:
+    cursor = db.cursor()
+    cursor.execute(
+        "SELECT user_email FROM sessions WHERE session_id = ?",
+        (session_id,)
+    )
+    row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return row[0]
+
+def save_credentials(db, email: str, creds: Credentials) -> None:
+    cursor = db.cursor()
+    cursor.execute("""
+        INSERT INTO user_credentials (user_email, credentials_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_email) DO UPDATE SET
+            credentials_json = excluded.credentials_json,
+            updated_at = CURRENT_TIMESTAMP
+    """, (email, creds.to_json()))
+    db.commit()
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.db_conn = sqlite3.connect("creds.db", check_same_thread=False)
@@ -75,10 +99,26 @@ def build_flow():
     return flow
 
 @app.get("/")
-def health(session_id: Optional[str] = Cookie(None)):
+def health(request: Request, session_id: Optional[str] = Cookie(None)):
     if not session_id:
         return RedirectResponse(url="/auth")
+
+    db = request.app.state.db_conn
+
+    # session id -> email -> access token -> valid? -> refresh (if not) -> list 5 emails
+    email = get_email_from_session(db=db, session_id=session_id)
+    if not email:
+        return RedirectResponse(url="/auth")
     
+    creds = load_credentials(db=db, email=email)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(GoogleRequest())
+            save_credentials(db=db, email=email, creds=creds)
+        else:
+            return RedirectResponse(url="/auth")
+        
     return "Welcome to MitoMail! ~"
 
 @app.get("/auth")
@@ -118,19 +158,7 @@ def callback(request: Request):
         if addr.get("metadata").get("primary") == True:
             email_address = addr.get("value")
 
-    creds = credentials.to_json()
-
-    cursor = db.cursor()
-
-    cursor.execute("""
-        INSERT INTO user_credentials (user_email, credentials_json, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_email) DO UPDATE SET
-            credentials_json = excluded.credentials_json,
-            updated_at = CURRENT_TIMESTAMP
-    """, (email_address, creds))
-
-    db.commit()
+    save_credentials(db, email_address, credentials)
 
     session_id = secrets.token_hex(32)
     response = RedirectResponse(url="/")
@@ -142,6 +170,7 @@ def callback(request: Request):
         samesite="lax"
     )
 
+    cursor = db.cursor()
     cursor.execute(
         "INSERT INTO sessions (session_id, user_email) VALUES (?, ?)",
         (session_id, email_address)
