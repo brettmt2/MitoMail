@@ -3,11 +3,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 
 from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
 
 import sqlite3
-
-import requests
-import json
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -81,5 +79,16 @@ def callback(request: Request):
     # need to save credentials. right now a new refresh token is being made thanks to "consent" param.
     # refresh token only is grabbed at first time logging in and giving consent
     credentials = flow.credentials
+
+    # get email address as id
+    ps = build('people', 'v1', credentials=credentials)
+    res = ps.people().get(resourceName='people/me', personFields="names,emailAddresses").execute()
+
+    for addr in res.get("emailAddresses", []):
+        if addr.get("metadata").get("primary") == True:
+            email_address = addr.get("value")
+
+    # save email + creds to db, to use access token and refresh token
+    creds = credentials.json()
 
     return {"status": "authenticated"}
