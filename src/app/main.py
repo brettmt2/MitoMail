@@ -48,7 +48,15 @@ def health():
     return {"status": "running"}
 
 @app.get("/auth")
-def login():
+def login(email_addr: str, request: Request): # include request to avoid circular imports and use app context
+    db = request.app.state.db_conn
+
+    # TODO: check email via query param 
+    # get credentials from db if they exist
+    # use google's oauth flow condition checks to see if I need to refresh
+    # if valid, return
+    # if not valid, create flow, and save new creds to DB
+
     # trigger google OAuth flow
     # use my client credentials to authorize access into user google account
     # grab access token to call gmail API on behalf of user
