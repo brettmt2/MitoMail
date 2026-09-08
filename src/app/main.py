@@ -1,11 +1,33 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Cookie
 from fastapi.responses import RedirectResponse
 
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from google.auth.transport.requests import Request as GoogleRequest
 
 import sqlite3
+from google.oauth2.credentials import Credentials
+
+import json
+import secrets
+from typing import Optional
+
+def load_credentials(db, email: str) -> Credentials | None:
+    cursor = db.cursor()
+    cursor.execute(
+        "SELECT credentials_json FROM user_credentials WHERE user_email = ?",
+        (email,)
+    )
+    row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    creds_json = row[0]
+    return Credentials.from_authorized_user_info(
+        info=json.loads(creds_json), scopes=SCOPES
+    )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -17,6 +39,14 @@ async def lifespan(app: FastAPI):
             user_email TEXT PRIMARY KEY,
             credentials_json TEXT NOT NULL,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            user_email TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
@@ -45,8 +75,11 @@ def build_flow():
     return flow
 
 @app.get("/")
-def health():
-    return {"status": "running"}
+def health(session_id: Optional[str] = Cookie(None)):
+    if not session_id:
+        return RedirectResponse(url="/auth")
+    
+    return "Welcome to MitoMail! ~"
 
 @app.get("/auth")
 def login(): # include request to avoid circular imports and use app context
@@ -66,18 +99,15 @@ def login(): # include request to avoid circular imports and use app context
 
 @app.get("/auth/callback")
 def callback(request: Request):
-    db = request.app.state.db_conn # get db conn to save and use access/refresh tokens
+    db = request.app.state.db_conn
 
     # use the same flow for state persistence
     state = request.query_params.get("state")
     flow = flows.pop(state)
 
-    # use the url to fetch access token and store it in the flow object
     url = str(request.url)
     flow.fetch_token(authorization_response=url)
-    
-    # need to save credentials. right now a new refresh token is being made thanks to "consent" param.
-    # refresh token only is grabbed at first time logging in and giving consent
+
     credentials = flow.credentials
 
     # get email address as id
@@ -88,8 +118,7 @@ def callback(request: Request):
         if addr.get("metadata").get("primary") == True:
             email_address = addr.get("value")
 
-    # save email + creds to db, to use access token and refresh token
-    creds = credentials.to_json()  # note: to_json(), not .json()
+    creds = credentials.to_json()
 
     cursor = db.cursor()
 
@@ -103,4 +132,20 @@ def callback(request: Request):
 
     db.commit()
 
-    return {"status": "authenticated"}
+    session_id = secrets.token_hex(32)
+    response = RedirectResponse(url="/")
+    response.set_cookie(
+        key="session_id", 
+        value=session_id,
+        httponly=True,
+        secure=True,
+        samesite="lax"
+    )
+
+    cursor.execute(
+        "INSERT INTO sessions (session_id, user_email) VALUES (?, ?)",
+        (session_id, email_address)
+    )
+    db.commit()
+
+    return response
