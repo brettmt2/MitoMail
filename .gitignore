@@ -1,5 +1,6 @@
 # Google OAuth
 credentials.json
+creds.db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

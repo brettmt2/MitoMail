@@ -1,9 +1,32 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 
 from google_auth_oauthlib.flow import Flow
 
-app = FastAPI()
+import sqlite3
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.db_conn = sqlite3.connect("creds.db", check_same_thread=False)
+    cursor = app.state.db_conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_credentials (
+            user_email TEXT PRIMARY KEY,
+            credentials_json TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    app.state.db_conn.commit()
+    
+    yield
+    
+    # shut down at app close
+    app.state.db_conn.close()
+
+app = FastAPI(lifespan=lifespan)
 
 SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
@@ -52,6 +75,11 @@ def callback(request: Request):
     # use the url to fetch access token and store it in the flow object
     url = str(request.url)
     flow.fetch_token(authorization_response=url)
+    
+    # need to save credentials. right now a new refresh token is being made thanks to "consent" param.
     credentials = flow.credentials
+    
+    #  TODO: save credentials to a file/db and test persistence
+    # use google refresh flow code
 
     return {"status": "authenticated"}
