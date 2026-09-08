@@ -89,6 +89,18 @@ def callback(request: Request):
             email_address = addr.get("value")
 
     # save email + creds to db, to use access token and refresh token
-    creds = credentials.json()
+    creds = credentials.to_json()  # note: to_json(), not .json()
+
+    cursor = db.cursor()
+
+    cursor.execute("""
+        INSERT INTO user_credentials (user_email, credentials_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_email) DO UPDATE SET
+            credentials_json = excluded.credentials_json,
+            updated_at = CURRENT_TIMESTAMP
+    """, (email_address, creds))
+
+    db.commit()
 
     return {"status": "authenticated"}
