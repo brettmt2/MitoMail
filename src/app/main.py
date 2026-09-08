@@ -6,6 +6,9 @@ from google_auth_oauthlib.flow import Flow
 
 import sqlite3
 
+import requests
+import json
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.db_conn = sqlite3.connect("creds.db", check_same_thread=False)
@@ -48,26 +51,15 @@ def health():
     return {"status": "running"}
 
 @app.get("/auth")
-def login(email_addr: str, request: Request): # include request to avoid circular imports and use app context
-    db = request.app.state.db_conn
-
-    # TODO: check email via query param 
-    # get credentials from db if they exist
-    # use google's oauth flow condition checks to see if I need to refresh
-    # if valid, return
-    # if not valid, create flow, and save new creds to DB
-
-    # trigger google OAuth flow
-    # use my client credentials to authorize access into user google account
-    # grab access token to call gmail API on behalf of user
+def login(): # include request to avoid circular imports and use app context
+    
     flow = build_flow()
 
     # first step of the OAuth flow - generate the authorization URL
     # using configuration of my client
     authorization_url, state = flow.authorization_url(
         access_type='offline',
-        include_granted_scopes='true',
-        prompt='consent'
+        include_granted_scopes='true'
     )
 
     flows[state] = flow
@@ -76,6 +68,8 @@ def login(email_addr: str, request: Request): # include request to avoid circula
 
 @app.get("/auth/callback")
 def callback(request: Request):
+    db = request.app.state.db_conn # get db conn to save and use access/refresh tokens
+
     # use the same flow for state persistence
     state = request.query_params.get("state")
     flow = flows.pop(state)
@@ -85,9 +79,7 @@ def callback(request: Request):
     flow.fetch_token(authorization_response=url)
     
     # need to save credentials. right now a new refresh token is being made thanks to "consent" param.
+    # refresh token only is grabbed at first time logging in and giving consent
     credentials = flow.credentials
-    
-    #  TODO: save credentials to a file/db and test persistence
-    # use google refresh flow code
 
     return {"status": "authenticated"}
