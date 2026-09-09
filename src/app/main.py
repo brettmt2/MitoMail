@@ -116,16 +116,19 @@ class RedirectException(Exception):
 
 @app.exception_handler(RedirectException)
 def redirect_exception_handler(request: Request, exc: RedirectException):
+    print("RedirectException caught, redirecting to /auth")
     return RedirectResponse(url="/auth")
 
 def validate_auth(request: Request, session_id: Optional[str] = Cookie(None)):
     if not session_id:
+        print("no session_id cookie")
         raise RedirectException()
 
     db = request.app.state.db_conn
 
     email = get_email_from_session(db=db, session_id=session_id)
     if not email:
+        print("session_id present but no matching email")
         raise RedirectException()
 
     creds = load_credentials(db=db, email=email)
@@ -135,6 +138,7 @@ def validate_auth(request: Request, session_id: Optional[str] = Cookie(None)):
             creds.refresh(GoogleRequest())
             save_credentials(db=db, email=email, creds=creds)
         else:
+            print("no valid creds and refresh not possible")
             raise RedirectException()
 
     return creds
