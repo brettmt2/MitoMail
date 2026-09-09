@@ -180,7 +180,7 @@ def callback(request: Request):
     ps = build('people', 'v1', credentials=credentials)
     res = ps.people().get(resourceName='people/me', personFields="names,emailAddresses").execute()
 
-    for addr in res.get("emailAddresses", []):
+    for addr in res.get("emailAddresses", []): # 0 is primary, according to google api docs. can update this
         if addr.get("metadata").get("primary") == True:
             email_address = addr.get("value")
 
@@ -205,3 +205,22 @@ def callback(request: Request):
     db.commit()
 
     return response
+
+@app.get("/api/user-info")
+def get_user_info(creds=Depends(validate_auth)):
+    ps = build('people', 'v1', credentials=creds)
+    info_res = ps.people().get(resourceName='people/me', personFields="names,photos").execute()
+    names = info_res.get('names', [])
+    photos = info_res.get('photos', [])
+    photo_url = 'default.jpg'
+    name = "User"
+
+    if names:
+        name = names[0].get("displayName", name)
+        print(name)
+
+    if photos:
+        photo_url = photos[0].get("url", photo_url)
+        print(photo_url)
+
+    return {"name": name, "photo_url": photo_url}
