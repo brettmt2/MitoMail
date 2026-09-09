@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Cookie
+from fastapi import FastAPI, Request, Cookie, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 
 from google_auth_oauthlib.flow import Flow
@@ -45,12 +45,14 @@ def get_email_from_session(db, session_id: str) -> str | None:
 def save_credentials(db, email: str, creds: Credentials) -> None:
     if not creds.refresh_token:
         user_creds: Credentials = load_credentials(db=db, email=email)
-        
+
         if not user_creds:
             return
         
         if user_creds.refresh_token:
-            creds.refresh_token = user_creds.refresh_token
+            creds_dict = json.loads(creds.to_json())
+            creds_dict['refresh_token'] = user_creds.refresh_token
+            creds = Credentials.from_authorized_user_info(info=creds_dict, scopes=SCOPES)
         else:
             return
 
@@ -109,18 +111,23 @@ def build_flow():
 
     return flow
 
-@app.get("/")
-def health(request: Request, session_id: Optional[str] = Cookie(None)):
+class RedirectException(Exception):
+    pass
+
+@app.exception_handler(RedirectException)
+def redirect_exception_handler(request: Request, exc: RedirectException):
+    return RedirectResponse(url="/auth")
+
+def validate_auth(request: Request, session_id: Optional[str] = Cookie(None)):
     if not session_id:
-        return RedirectResponse(url="/auth")
+        raise RedirectException()
 
     db = request.app.state.db_conn
 
-    # session id -> email -> access token -> valid? -> refresh (if not) -> list 5 emails
     email = get_email_from_session(db=db, session_id=session_id)
     if not email:
-        return RedirectResponse(url="/auth")
-    
+        raise RedirectException()
+
     creds = load_credentials(db=db, email=email)
 
     if not creds or not creds.valid:
@@ -128,8 +135,12 @@ def health(request: Request, session_id: Optional[str] = Cookie(None)):
             creds.refresh(GoogleRequest())
             save_credentials(db=db, email=email, creds=creds)
         else:
-            return RedirectResponse(url="/auth")
-        
+            raise RedirectException()
+
+    return creds
+
+@app.get("/")
+def home(creds=Depends(validate_auth)):
     return "Welcome to MitoMail! ~"
 
 @app.get("/auth")
@@ -178,7 +189,8 @@ def callback(request: Request):
         value=session_id,
         httponly=True,
         secure=True,
-        samesite="lax"
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30  # 30 days
     )
 
     cursor = db.cursor()
