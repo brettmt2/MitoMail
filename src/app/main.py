@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Cookie, Depends, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Request, Cookie, Depends
+from fastapi.responses import RedirectResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+
 
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -135,6 +137,7 @@ def validate_auth(request: Request, session_id: Optional[str] = Cookie(None)):
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
+            print("refreshing..")
             creds.refresh(GoogleRequest())
             save_credentials(db=db, email=email, creds=creds)
         else:
@@ -145,7 +148,7 @@ def validate_auth(request: Request, session_id: Optional[str] = Cookie(None)):
 
 @app.get("/")
 def home(creds=Depends(validate_auth)):
-    return "Welcome to MitoMail! ~"
+    return FileResponse("src/web/index.html")
 
 @app.get("/auth")
 def login(): # include request to avoid circular imports and use app context
@@ -224,3 +227,5 @@ def get_user_info(creds=Depends(validate_auth)):
         print(photo_url)
 
     return {"name": name, "photo_url": photo_url}
+
+app.mount("/static", StaticFiles(directory="src/web"), name="static")
